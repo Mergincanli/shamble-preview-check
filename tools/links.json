@@ -1,0 +1,10 @@
+{
+  "project": "https://shamble-preview-check.pages.dev/",
+  "links": {
+    "production": "https://shamble-preview-check.pages.dev/",
+    "iso-off": "https://iso-off.shamble-preview-check.pages.dev/",
+    "iso-on": "https://iso-on.shamble-preview-check.pages.dev/",
+    "bite-coep": "https://bite-coep.shamble-preview-check.pages.dev/",
+    "bite-nocache": "https://bite-nocache.shamble-preview-check.pages.dev/"
+  }
+}

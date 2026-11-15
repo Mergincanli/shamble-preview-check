@@ -1,0 +1,24 @@
+{
+  "round-a": [
+    { "leg": "production", "mode": "production", "branch": "@production", "expect": "production", "count": 1 },
+    { "leg": "iso-off", "mode": "preview", "branch": "iso-off", "expect": "preview", "count": 1 },
+    { "leg": "iso-on", "mode": "preview-isolated", "branch": "iso-on", "expect": "preview-isolated", "count": 1 }
+  ],
+  "bites": [
+    { "leg": "bite-coep", "mode": "bite-coep", "branch": "bite-coep", "expect": "preview-isolated", "count": 1 },
+    { "leg": "bite-nocache", "mode": "bite-nocache", "branch": "bite-nocache", "expect": "preview", "count": 1 },
+    { "leg": "bite-oversize", "mode": "bite-oversize", "branch": "bite-oversize", "expect": "preview", "count": 1 }
+  ],
+  "bite-production": [
+    { "leg": "bite-noindex", "mode": "bite-noindex", "branch": "@production", "expect": "production", "count": 1 }
+  ],
+  "restore-production": [
+    { "leg": "production", "mode": "production", "branch": "@production", "expect": "production", "count": 1 }
+  ],
+  "uploads": [
+    { "leg": "uploads", "mode": "preview", "branch": "uploads", "expect": "preview", "count": 10 }
+  ],
+  "revoked": [
+    { "leg": "revoked", "mode": "preview", "branch": "revoked", "expect": "preview", "count": 1 }
+  ]
+}
