@@ -1,8 +1,9 @@
 // Shared helpers for the check scripts. Node 22, no dependencies.
 // Every fetch is cookie-less, names itself in the User-Agent (Pages answers default script User-Agents with a 403,
 // error 1010: Cloudflare's known-issues page, 2026-11-06) and never follows a redirect, so a login wall is seen as one.
-// Each answer is either a reading (an HTTP status the scripts judge) or "no reading" (a transport error, a 5xx, or the
-// 1010 block after every retry): a "no reading" is never judged as a pass, a failure, or "gone".
+// Each answer is either a reading (an HTTP status the scripts judge) or "no reading": a transport error, a 5xx, a 429,
+// a Cloudflare challenge or the 1010 block, after every retry. A "no reading" is never judged as a pass, a failure, or
+// "gone". A redirect's Location is kept only as origin and path (an Access login address carries signed state).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -46,13 +47,20 @@ export function linksOf(record) {
   ];
 }
 
-export const isBlocked = (a) => a.status === 403 && /error code:?\s*1010|Error 1010/i.test(a.body || '');
-export const isWall = (a) => a.status >= 300 && a.status < 400 && /\.cloudflareaccess\.com$/i.test(hostOf(a.location));
 const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
+export const isBlocked = (a) => a.status === 403 && /error code:?\s*1010|Error 1010/i.test(a.body || '');
+export const isChallenge = (a) => (a.status === 403 || a.status === 503) && /challenge/i.test(lower(a.headers || {}, 'cf-mitigated'));
+export const isWall = (a) => a.status >= 300 && a.status < 400 && /\.cloudflareaccess\.com$/i.test(hostOf(a.location));
+const isTransient = (a) => a.status === 0 || a.status === 429 || a.status >= 500 || isBlocked(a) || isChallenge(a);
 
 // The build marker the page carries. An empty marker (the tombstone's) never matches anything.
 export function hasMarker(body, marker) {
   return typeof marker === 'string' && marker.length > 0 && (body || '').includes(`<meta name="build-marker" content="${marker}">`);
+}
+
+function originAndPath(location, base) {
+  if (!location) return '';
+  try { const u = new URL(location, base); return `${u.origin}${u.pathname}`; } catch { return '(unreadable)'; }
 }
 
 async function fetchOnce(url) {
@@ -61,24 +69,24 @@ async function fetchOnce(url) {
     const body = await res.text();
     const headers = {};
     res.headers.forEach((v, k) => { headers[k] = v; });
-    return { url, status: res.status, headers, location: res.headers.get('location') || '', body: body.slice(0, 20000) };
+    return { url, status: res.status, headers, location: originAndPath(res.headers.get('location'), url), body: body.slice(0, 20000) };
   } catch (err) {
     return { url, status: 0, headers: {}, location: '', body: '', error: String((err && err.cause && err.cause.code) || err) };
   }
 }
 
-// Retries a transport error, a 5xx or the 1010 block (and, when retry404 is set, a 404: an upload seconds old may not
-// have reached every edge yet). Returns the last answer with noReading set when no reading was ever obtained.
+// Retries a transient answer (and, when retry404 is set, a 404: an upload seconds old may not have reached every edge
+// yet). Returns the last answer, how many tries it took and when they ran, with noReading set when every try was
+// transient.
 export async function fetchWithRetry(url, { attempts = 5, retry404 = false } = {}) {
   let a;
+  const firstAt = new Date().toISOString();
   for (let i = 0; i < attempts; i += 1) {
     a = await fetchOnce(url);
-    const transient = a.status === 0 || a.status >= 500 || isBlocked(a) || (retry404 && a.status === 404);
-    if (!transient) return { ...a, noReading: false, tries: i + 1 };
+    if (!isTransient(a) && !(retry404 && a.status === 404)) return { ...a, noReading: false, tries: i + 1, firstAt, lastAt: new Date().toISOString() };
     if (i < attempts - 1) await sleep(2000 * 2 ** i);
   }
-  const noReading = a.status === 0 || a.status >= 500 || isBlocked(a);
-  return { ...a, noReading, tries: attempts };
+  return { ...a, noReading: isTransient(a), tries: attempts, firstAt, lastAt: new Date().toISOString() };
 }
 
-export const lower = (h, name) => (h[name.toLowerCase()] || '').trim();
+export function lower(h, name) { return (h[name.toLowerCase()] || '').trim(); }

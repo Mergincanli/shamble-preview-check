@@ -4,7 +4,10 @@
 // WebdriverIO's version and the runner image.
 //   node tools/wdio/run.mjs --browsers chrome,MicrosoftEdge,firefox --links tools/links.json --out browser-results.json
 // PM-0006-3: crossOriginIsolated in the page and in its worker, 3 loads per browser and link: true on iso-on, false on
-// iso-off and production; on bite-coep (COEP taken off the worker) anything but true/true is the bite caught.
+// iso-off and production. On bite-coep (COEP taken off the worker) the bite is caught when the page finished, the page
+// itself is isolated and the worker is not (Chromium refuses the worker's script outright, which the results log
+// records as the observed form of the draft's "false"); a page that did not finish is no reading.
+// Each row records the page's build marker and mode, so a stale link is visible.
 // PM-0006-4 (Chrome): first visit, tab closed, second visit in the same profile: the content file's transferSize must
 // be 0 on production, 3 times; on bite-nocache (Cache-Control: no-cache) above 0 is the bite caught.
 // Exit 0: everything as expected; 1: something not as expected; 3: nothing unexpected, but some load gave no reading.
@@ -49,14 +52,21 @@ async function withSession(browser, work) {
 
 async function openAndWait(session, url) {
   await session.url(url);
-  await session.waitUntil(async () => (await session.execute(() => document.documentElement.dataset.done || '')) !== '',
-    { timeout: 30000, interval: 250, timeoutMsg: 'the page did not finish within 30 s' });
+  try {
+    await session.waitUntil(async () => (await session.execute(() => document.documentElement.dataset.done || '')) !== '',
+      { timeout: 30000, interval: 250 });
+  } catch {
+    // Say what was on the screen instead (for instance a Cloudflare block page): its title and the start of its text.
+    const title = await session.getTitle().catch(() => '');
+    const text = await session.execute(() => (document.body ? document.body.innerText : '').slice(0, 200)).catch(() => '');
+    throw new Error(`the page did not finish within 30 s (title ${JSON.stringify(title)}, text ${JSON.stringify(text)})`);
+  }
 }
 
 const readPage = (session) => session.execute(() => {
   const t = (id) => document.getElementById(id).textContent;
-  return { done: document.documentElement.dataset.done, marker: t('marker'), page: t('coi-page'), worker: t('coi-worker'),
-    wasm: t('wasm'), status: t('status'), resources: t('resources') };
+  return { done: document.documentElement.dataset.done, marker: t('marker'), mode: t('mode'), page: t('coi-page'),
+    worker: t('coi-worker'), wasm: t('wasm'), status: t('status'), resources: t('resources') };
 });
 
 const contentTransferSize = (session) => session.execute(() => {
@@ -76,15 +86,16 @@ for (const browser of browsers) {
           return { version, ...(await readPage(session)) };
         }));
         const seen = `${row.page}/${row.worker}`;
-        if (name === 'bite-coep') row.outcome = seen === 'true/true' ? 'bite missed' : 'bite caught';
-        else row.outcome = row.done === '1' && seen === EXPECT[name] ? 'as expected' : 'not as expected';
+        if (row.done !== '1') row.outcome = 'no reading';
+        else if (name === 'bite-coep') row.outcome = row.page === 'true' && row.worker !== 'true' ? 'bite caught' : 'bite missed';
+        else row.outcome = seen === EXPECT[name] ? 'as expected' : 'not as expected';
         row.seen = seen;
       } catch (err) {
         row.outcome = 'no reading';
         row.error = String((err && err.message) || err).slice(0, 300);
       }
       rows.push(row);
-      console.log(`${row.outcome.padEnd(16)} ${browser} ${row.version ?? ''} ${name} load ${load}: ${row.seen ?? row.error}`);
+      console.log(`${row.outcome.padEnd(16)} ${browser} ${row.version ?? ''} ${name} load ${load}: ${row.seen ?? row.error}${row.mode ? ` (mode ${row.mode}, marker ${String(row.marker).slice(0, 7)})` : ''}`);
     }
   }
   if (browser === 'chrome') {

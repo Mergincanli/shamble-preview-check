@@ -5,7 +5,11 @@
 // mistakes): every .wasm as application/wasm; previews carry X-Robots-Tag noindex, production none; the isolated
 // preview sends COOP same-origin and COEP require-corp on every HTML, JS, worker and .wasm response, the others neither;
 // the content file is cached with "immutable" (PM-0006-4's header half). X-Check-Rule is recorded for R5-PREV-OQ6 and
-// judged nowhere. Exit 0: every link passed; 1: a reading failed; 3: no failure, but some link gave no reading.
+// judged nowhere. index.html is read as "/" and 404.html is not fetched: Pages redirects .html paths to their
+// extension-less form (serving-pages page, 2026-11-11), and no page load fetches 404.html.
+// Before judging a link, its served manifest.json must name this upload's mode and marker (else it is a stale link:
+// retried, then "no reading").
+// Exit 0: every link passed; 1: a reading failed; 3: no failure, but a link gave no reading, or there was no record.
 import { writeFileSync } from 'node:fs';
 import { USER_AGENT, fetchWithRetry, linksOf, lower, readRecords } from './lib.mjs';
 
@@ -15,11 +19,13 @@ if (!args.records || !args.out) { console.error('check-headers: --records <folde
 
 const EXPECTS = ['production', 'preview', 'preview-isolated'];
 const ISOLATION_TYPES = /\.(html|js|wasm)$/;
+const NOT_FETCHED = { 'index.html': 'read as "/"', '404.html': 'no page load fetches it; Pages redirects .html paths' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function judge(expect, path, answer, bundle) {
   const failures = [];
   const h = answer.headers;
-  if (answer.status !== 200) failures.push(`status ${answer.status}`);
+  if (answer.status !== 200) failures.push(`status ${answer.status}${answer.location ? ` to ${answer.location}` : ''}`);
   if (path.endsWith('.wasm') && lower(h, 'content-type').split(';')[0] !== 'application/wasm') {
     failures.push(`.wasm served as ${JSON.stringify(lower(h, 'content-type'))}`);
   }
@@ -40,22 +46,38 @@ function judge(expect, path, answer, bundle) {
   return failures;
 }
 
-async function checkForm(record, link) {
-  const manifestAnswer = await fetchWithRetry(`${link.base}manifest.json`, { retry404: true });
-  if (manifestAnswer.noReading || manifestAnswer.status !== 200) {
-    return { ...link, result: manifestAnswer.noReading ? 'no-reading' : 'fail', note: `manifest.json: status ${manifestAnswer.status}${manifestAnswer.error ? ` (${manifestAnswer.error})` : ''}`, responses: [] };
+// The served manifest of a link, retried until it names this upload (a fresh upload may take seconds to reach an edge).
+async function manifestOf(record, link) {
+  let last = { note: 'not read' };
+  for (let i = 0; i < 5; i += 1) {
+    const answer = await fetchWithRetry(`${link.base}manifest.json`, { retry404: true });
+    if (answer.noReading) return { result: 'no-reading', note: `manifest.json: status ${answer.status}${answer.error ? ` (${answer.error})` : ''}` };
+    if (answer.status !== 200) return { result: 'fail', note: `manifest.json: status ${answer.status}` };
+    let manifest;
+    try { manifest = JSON.parse(answer.body); } catch { return { result: 'fail', note: 'manifest.json is not JSON' }; }
+    if (manifest.mode === record.mode && manifest.marker === record.marker) return { manifest, answer };
+    last = { note: `stale link: it serves mode ${manifest.mode}, marker ${manifest.marker}` };
+    await sleep(5000 * (i + 1));
   }
-  let manifest;
-  try { manifest = JSON.parse(manifestAnswer.body); } catch { return { ...link, result: 'fail', note: 'manifest.json is not JSON', responses: [] }; }
-  const paths = ['/', '/manifest.json', ...manifest.files.map((f) => `/${f.path}`)];
+  return { result: 'no-reading', note: last.note };
+}
+
+async function checkForm(record, link) {
+  const m = await manifestOf(record, link);
+  if (!m.manifest) return { ...link, result: m.result, note: m.note, responses: [] };
+  const fetched = m.manifest.files.map((f) => f.path).filter((p) => !Object.hasOwn(NOT_FETCHED, p));
+  const paths = ['/', '/manifest.json', ...fetched.map((p) => `/${p}`)];
   const responses = [];
   for (const path of paths) {
-    const answer = path === '/manifest.json' ? manifestAnswer : await fetchWithRetry(`${link.base}${path.slice(1)}`, { retry404: true });
-    const failures = answer.noReading ? [] : judge(record.expect, path, answer, manifest.bundle);
+    const answer = path === '/manifest.json' ? m.answer : await fetchWithRetry(`${link.base}${path.slice(1)}`, { retry404: true });
+    const failures = answer.noReading ? [] : judge(record.expect, path, answer, m.manifest.bundle);
     responses.push({
       path,
       status: answer.status,
       reading: !answer.noReading,
+      tries: answer.tries,
+      first_try: answer.firstAt,
+      last_try: answer.lastAt,
       ...(answer.error ? { error: answer.error } : {}),
       headers: Object.fromEntries(['content-type', 'cache-control', 'x-robots-tag', 'cross-origin-opener-policy',
         'cross-origin-embedder-policy', 'x-check-rule'].map((n) => [n, lower(answer.headers, n) || null])),
@@ -64,7 +86,14 @@ async function checkForm(record, link) {
   }
   const failed = responses.some((r) => r.failures.length);
   const unread = responses.some((r) => !r.reading);
-  return { ...link, result: failed ? 'fail' : unread ? 'no-reading' : 'pass', xCheckRule: responses[0]?.headers['x-check-rule'] ?? null, responses };
+  return {
+    ...link,
+    result: failed ? 'fail' : unread ? 'no-reading' : 'pass',
+    xCheckRule: responses[0]?.headers['x-check-rule'] ?? null,
+    not_fetched: NOT_FETCHED,
+    failure_paths: responses.filter((r) => r.failures.length).map((r) => ({ path: r.path, failures: r.failures })),
+    responses,
+  };
 }
 
 const records = readRecords(args.records).filter((r) => EXPECTS.includes(r.expect));
@@ -76,11 +105,11 @@ for (const record of records) {
   out.records.push({ deployment_id: record.deployment_id, branch: record.branch, leg: record.leg, mode: record.mode, expect: record.expect, environment: record.environment, forms });
   for (const f of forms) {
     console.log(`${f.result.toUpperCase().padEnd(10)} ${record.leg || record.branch} (${record.mode}, expect ${record.expect}) ${f.form} ${f.base}  X-Check-Rule: ${f.xCheckRule ?? '-'}${f.note ? `  ${f.note}` : ''}`);
-    for (const r of f.responses) for (const why of r.failures) console.log(`           ${r.path}: ${why}`);
+    for (const r of f.failure_paths || []) for (const why of r.failures) console.log(`           ${r.path}: ${why}`);
   }
 }
 const all = out.records.flatMap((r) => r.forms.map((f) => f.result));
-out.summary = { pass: all.filter((x) => x === 'pass').length, fail: all.filter((x) => x === 'fail').length, no_reading: all.filter((x) => x === 'no-reading').length };
+out.summary = { records: out.records.length, pass: all.filter((x) => x === 'pass').length, fail: all.filter((x) => x === 'fail').length, no_reading: all.filter((x) => x === 'no-reading').length };
 writeFileSync(args.out, `${JSON.stringify(out, null, 2)}\n`);
 console.log(`summary: ${JSON.stringify(out.summary)}`);
-process.exit(out.summary.fail ? 1 : out.summary.no_reading ? 3 : 0);
+process.exit(out.summary.fail ? 1 : (out.summary.no_reading || !out.summary.records) ? 3 : 0);

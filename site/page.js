@@ -29,6 +29,7 @@ function askWorker() {
 async function main() {
   show('coi-page', self.crossOriginIsolated);
   const manifest = await (await fetch('manifest.json', { cache: 'no-store' })).json();
+  show('mode', manifest.mode);
   const content = await (await fetch(manifest.bundle)).arrayBuffer();
   show('bundle', `${manifest.bundle} (${content.byteLength} bytes)`);
   const report = await askWorker();
