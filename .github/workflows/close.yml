@@ -95,4 +95,4 @@ jobs:
         with:
           name: deployment-record-${{ github.run_id }}-tombstone
           path: records/
-          retention-days: 7
+          retention-days: 14

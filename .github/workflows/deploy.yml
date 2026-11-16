@@ -91,7 +91,6 @@ jobs:
     permissions:
       contents: read
       actions: read
-      deployments: write
     environment:
       name: preview
       url: ${{ steps.upload.outputs.url }}
@@ -155,7 +154,7 @@ jobs:
         with:
           name: deployment-record-${{ github.run_id }}-${{ matrix.leg }}
           path: records/
-          retention-days: 7
+          retention-days: 14
           if-no-files-found: warn
 
   verify:
