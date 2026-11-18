@@ -1,0 +1,1 @@
+Test pull request (a') (cs/pdt-one) for the preview hosting check (ADR 0006, spike 1). Push 1.
