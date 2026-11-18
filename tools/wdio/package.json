@@ -1,0 +1,9 @@
+{
+  "name": "preview-check-browsers",
+  "private": true,
+  "description": "The preview hosting check's browser runs (PM-0006-3 and -4): WebdriverIO, pinned, installed with npm ci --ignore-scripts.",
+  "type": "module",
+  "dependencies": {
+    "webdriverio": "10.1.0"
+  }
+}

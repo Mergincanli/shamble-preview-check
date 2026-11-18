@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="build-marker" content="__BUILD_MARKER__">
+<title>Preview hosting check</title>
+<link rel="stylesheet" href="page.css">
+<script type="module" src="page.js"></script>
+</head>
+<body>
+<main>
+<h1>Preview hosting check</h1>
+<p>A throwaway test page for SHAMBLE FRONTLINES' preview hosting check (ADR 0006, spike 1).</p>
+<dl>
+<dt>Build marker</dt><dd><code id="marker">__BUILD_MARKER__</code></dd>
+<dt>Build mode</dt><dd><code id="mode">waiting</code></dd>
+<dt>crossOriginIsolated (page)</dt><dd><code id="coi-page">waiting</code></dd>
+<dt>crossOriginIsolated (worker)</dt><dd><code id="coi-worker">waiting</code></dd>
+<dt>WebAssembly</dt><dd><code id="wasm">waiting</code></dd>
+<dt>Content file</dt><dd><code id="bundle">waiting</code></dd>
+<dt>Status</dt><dd><code id="status">loading</code></dd>
+</dl>
+<h2>Resources loaded (page and worker)</h2>
+<pre id="resources"></pre>
+</main>
+</body>
+</html>
