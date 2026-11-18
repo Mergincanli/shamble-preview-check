@@ -1,0 +1,1 @@
+Test pull request (c) (cs/pd-open) for the preview hosting check (ADR 0006, spike 1). Push 1.
